@@ -1,9 +1,13 @@
 use std::ops::Mul;
 
+use crate::prelude::GlobalTransform2d;
+
 use super::Transform;
 use bevy_ecs::{component::Component, reflect::ReflectComponent};
 use bevy_math::{Affine3A, Mat4, Quat, Vec3, Vec3A};
-use bevy_reflect::{std_traits::ReflectDefault, FromReflect, Reflect};
+use bevy_reflect::{std_traits::ReflectDefault, FromReflect, Reflect, ReflectFromReflect};
+#[cfg(feature = "serialize")]
+use bevy_reflect::{ReflectDeserialize, ReflectSerialize};
 
 /// Describe the position of an entity relative to the reference frame.
 ///
@@ -30,12 +34,14 @@ use bevy_reflect::{std_traits::ReflectDefault, FromReflect, Reflect};
 ///
 /// # Examples
 ///
-/// - [`transform`]
-///
-/// [`transform`]: https://github.com/bevyengine/bevy/blob/latest/examples/transforms/transform.rs
+/// - [`transform`](https://github.com/bevyengine/bevy/blob/latest/examples/transforms/transform.rs)
 #[derive(Component, Debug, PartialEq, Clone, Copy, Reflect, FromReflect)]
-#[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
-#[reflect(Component, Default, PartialEq)]
+#[reflect(Component, Default, PartialEq, FromReflect)]
+#[cfg_attr(
+    feature = "serialize",
+    derive(serde::Serialize, serde::Deserialize),
+    reflect(Serialize, Deserialize)
+)]
 pub struct GlobalTransform(Affine3A);
 
 macro_rules! impl_local_axis {
@@ -185,7 +191,7 @@ impl GlobalTransform {
 
     /// Transforms the given `point`, applying shear, scale, rotation and translation.
     ///
-    /// This moves `point` into the local space of this [`GlobalTransform`].
+    /// This moves the `point` from the local space of this entity into global space.
     #[inline]
     pub fn transform_point(&self, point: Vec3) -> Vec3 {
         self.0.transform_point3(point)
@@ -220,6 +226,12 @@ impl From<Affine3A> for GlobalTransform {
 impl From<Mat4> for GlobalTransform {
     fn from(matrix: Mat4) -> Self {
         Self(Affine3A::from_mat4(matrix))
+    }
+}
+
+impl From<GlobalTransform2d> for GlobalTransform {
+    fn from(transform: GlobalTransform2d) -> Self {
+        Self::from(transform.compute_matrix())
     }
 }
 

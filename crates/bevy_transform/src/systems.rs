@@ -1,56 +1,56 @@
-use crate::components::{GlobalTransform, Transform};
+use std::ops::Mul;
+
 use bevy_ecs::{
     change_detection::Ref,
-    prelude::{Changed, DetectChanges, Entity, Query, With, Without},
+    prelude::{Changed, Component, DetectChanges, Entity, Query, With, Without},
     removal_detection::RemovedComponents,
     system::{Local, ParamSet},
 };
 use bevy_hierarchy::{Children, Parent};
 
-/// Update [`GlobalTransform`] component of entities that aren't in the hierarchy
+/// Update [`GlobalTransform`](super::GlobalTransform) component of entities that aren't in the hierarchy
 ///
 /// Third party plugins should ensure that this is used in concert with [`propagate_transforms`].
-pub fn sync_simple_transforms(
+pub fn sync_simple_transforms<A, B>(
     mut query: ParamSet<(
-        Query<
-            (&Transform, &mut GlobalTransform),
-            (Changed<Transform>, Without<Parent>, Without<Children>),
-        >,
-        Query<(Ref<Transform>, &mut GlobalTransform), Without<Children>>,
+        Query<(&A, &mut B), (Changed<A>, Without<Parent>, Without<Children>)>,
+        Query<(Ref<A>, &mut B), Without<Children>>,
     )>,
     mut orphaned: RemovedComponents<Parent>,
-) {
-    // Update changed entities.
+) where
+    A: Component + Copy + Into<B>,
+    B: Component + Copy + Mul<B, Output = B>,
+{
     query
         .p0()
         .par_iter_mut()
         .for_each_mut(|(transform, mut global_transform)| {
-            *global_transform = GlobalTransform::from(*transform);
+            *global_transform = (*transform).into();
         });
     // Update orphaned entities.
     let mut query = query.p1();
     let mut iter = query.iter_many_mut(orphaned.iter());
     while let Some((transform, mut global_transform)) = iter.fetch_next() {
         if !transform.is_changed() {
-            *global_transform = GlobalTransform::from(*transform);
+            *global_transform = (*transform).into();
         }
     }
 }
 
-/// Update [`GlobalTransform`] component of entities based on entity hierarchy and
-/// [`Transform`] component.
+/// Update [`GlobalTransform`](super::GlobalTransform) component of entities based on entity hierarchy and
+/// [`Transform`](super::Transform) component.
 ///
 /// Third party plugins should ensure that this is used in concert with [`sync_simple_transforms`].
-pub fn propagate_transforms(
-    mut root_query: Query<
-        (Entity, &Children, Ref<Transform>, &mut GlobalTransform),
-        Without<Parent>,
-    >,
+pub fn propagate_transforms<A, B>(
+    mut root_query: Query<(Entity, &Children, Ref<A>, &mut B), Without<Parent>>,
     mut orphaned: RemovedComponents<Parent>,
-    transform_query: Query<(Ref<Transform>, &mut GlobalTransform, Option<&Children>), With<Parent>>,
+    transform_query: Query<(Ref<A>, &mut B, Option<&Children>), With<Parent>>,
     parent_query: Query<(Entity, Ref<Parent>)>,
     mut orphaned_entities: Local<Vec<Entity>>,
-) {
+) where
+    A: Component + Copy,
+    B: Component + Copy + From<A> + Mul<B, Output = B>,
+{
     orphaned_entities.clear();
     orphaned_entities.extend(orphaned.iter());
     orphaned_entities.sort_unstable();
@@ -58,7 +58,7 @@ pub fn propagate_transforms(
         |(entity, children, transform, mut global_transform)| {
             let changed = transform.is_changed() || orphaned_entities.binary_search(&entity).is_ok();
             if changed {
-                *global_transform = GlobalTransform::from(*transform);
+                *global_transform = (*transform).into();
             }
 
             for (child, actual_parent) in parent_query.iter_many(children) {
@@ -76,7 +76,7 @@ pub fn propagate_transforms(
                 // - Since this is the only place where `transform_query` gets used, there will be no conflicting fetches elsewhere.
                 unsafe {
                     propagate_recursive(
-                        &global_transform,
+                        &*global_transform,
                         &transform_query,
                         &parent_query,
                         child,
@@ -101,16 +101,16 @@ pub fn propagate_transforms(
 /// nor any of its descendants.
 /// - The caller must ensure that the hierarchy leading to `entity`
 /// is well-formed and must remain as a tree or a forest. Each entity must have at most one parent.
-unsafe fn propagate_recursive(
-    parent: &GlobalTransform,
-    transform_query: &Query<
-        (Ref<Transform>, &mut GlobalTransform, Option<&Children>),
-        With<Parent>,
-    >,
+unsafe fn propagate_recursive<A, B>(
+    parent: &B,
+    transform_query: &Query<(Ref<A>, &mut B, Option<&Children>), With<Parent>>,
     parent_query: &Query<(Entity, Ref<Parent>)>,
     entity: Entity,
     mut changed: bool,
-) {
+) where
+    A: Component + Copy,
+    B: Component + Copy + From<A> + Mul<B, Output = B>,
+{
     let (global_matrix, children) = {
         let Ok((transform, mut global_transform, children)) =
             // SAFETY: This call cannot create aliased mutable references.
@@ -145,7 +145,7 @@ unsafe fn propagate_recursive(
 
         changed |= transform.is_changed();
         if changed {
-            *global_transform = parent.mul_transform(*transform);
+            *global_transform = *parent * B::from(*transform);
         }
         (*global_transform, children)
     };
@@ -196,7 +196,10 @@ mod test {
             |offset| TransformBundle::from_transform(Transform::from_xyz(offset, offset, offset));
 
         let mut schedule = Schedule::new();
-        schedule.add_systems((sync_simple_transforms, propagate_transforms));
+        schedule.add_systems((
+            sync_simple_transforms::<Transform, GlobalTransform>,
+            propagate_transforms::<Transform, GlobalTransform>,
+        ));
 
         let mut command_queue = CommandQueue::default();
         let mut commands = Commands::new(&mut command_queue, &world);
@@ -247,7 +250,10 @@ mod test {
         let mut world = World::default();
 
         let mut schedule = Schedule::new();
-        schedule.add_systems((sync_simple_transforms, propagate_transforms));
+        schedule.add_systems((
+            sync_simple_transforms::<Transform, GlobalTransform>,
+            propagate_transforms::<Transform, GlobalTransform>,
+        ));
 
         // Root entity
         world.spawn(TransformBundle::from(Transform::from_xyz(1.0, 0.0, 0.0)));
@@ -285,7 +291,10 @@ mod test {
         let mut world = World::default();
 
         let mut schedule = Schedule::new();
-        schedule.add_systems((sync_simple_transforms, propagate_transforms));
+        schedule.add_systems((
+            sync_simple_transforms::<Transform, GlobalTransform>,
+            propagate_transforms::<Transform, GlobalTransform>,
+        ));
 
         // Root entity
         let mut queue = CommandQueue::default();
@@ -325,7 +334,10 @@ mod test {
         let mut world = World::default();
 
         let mut schedule = Schedule::new();
-        schedule.add_systems((sync_simple_transforms, propagate_transforms));
+        schedule.add_systems((
+            sync_simple_transforms::<Transform, GlobalTransform>,
+            propagate_transforms::<Transform, GlobalTransform>,
+        ));
 
         // Add parent entities
         let mut children = Vec::new();
@@ -401,7 +413,13 @@ mod test {
         let mut app = App::new();
         ComputeTaskPool::init(TaskPool::default);
 
-        app.add_systems(Update, (sync_simple_transforms, propagate_transforms));
+        app.add_systems(
+            Update,
+            (
+                sync_simple_transforms::<Transform, GlobalTransform>,
+                propagate_transforms::<Transform, GlobalTransform>,
+            ),
+        );
 
         let translation = vec3(1.0, 0.0, 0.0);
 
@@ -447,7 +465,13 @@ mod test {
         let mut temp = World::new();
         let mut app = App::new();
 
-        app.add_systems(Update, (propagate_transforms, sync_simple_transforms));
+        app.add_systems(
+            Update,
+            (
+                propagate_transforms::<Transform, GlobalTransform>,
+                sync_simple_transforms::<Transform, GlobalTransform>,
+            ),
+        );
 
         fn setup_world(world: &mut World) -> (Entity, Entity) {
             let mut grandchild = Entity::from_raw(0);

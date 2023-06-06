@@ -14,6 +14,7 @@ use bevy_ecs::{
     entity::Entity,
     event::EventReader,
     prelude::With,
+    query::AnyOf,
     reflect::ReflectComponent,
     system::{Commands, Query, Res, ResMut, Resource},
 };
@@ -21,7 +22,7 @@ use bevy_log::warn;
 use bevy_math::{Mat4, Ray, Rect, UVec2, UVec4, Vec2, Vec3};
 use bevy_reflect::prelude::*;
 use bevy_reflect::FromReflect;
-use bevy_transform::components::GlobalTransform;
+use bevy_transform::{components::GlobalTransform, prelude::GlobalTransform2d};
 use bevy_utils::{HashMap, HashSet};
 use bevy_window::{
     NormalizedWindowRef, PrimaryWindow, Window, WindowCreated, WindowRef, WindowResized,
@@ -582,7 +583,7 @@ pub fn extract_cameras(
             Entity,
             &Camera,
             &CameraRenderGraph,
-            &GlobalTransform,
+            AnyOf<(&GlobalTransform, &GlobalTransform2d)>,
             &VisibleEntities,
             Option<&ColorGrading>,
             Option<&TemporalJitter>,
@@ -595,7 +596,7 @@ pub fn extract_cameras(
         entity,
         camera,
         camera_render_graph,
-        transform,
+        (transform_3d, transform_2d),
         visible_entities,
         color_grading,
         temporal_jitter,
@@ -618,6 +619,10 @@ pub fn extract_cameras(
 
             let mut commands = commands.get_or_spawn(entity);
 
+            let transform = transform_3d
+                .copied()
+                .unwrap_or_else(|| GlobalTransform::from(*transform_2d.unwrap()));
+
             commands.insert((
                 ExtractedCamera {
                     target: camera.target.normalize(primary_window),
@@ -633,7 +638,7 @@ pub fn extract_cameras(
                 },
                 ExtractedView {
                     projection: camera.projection_matrix(),
-                    transform: *transform,
+                    transform,
                     view_projection: None,
                     hdr: camera.hdr,
                     viewport: UVec4::new(

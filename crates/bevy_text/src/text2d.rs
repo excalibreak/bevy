@@ -9,7 +9,7 @@ use bevy_ecs::{
     reflect::ReflectComponent,
     system::{Local, Query, Res, ResMut},
 };
-use bevy_math::{Vec2, Vec3};
+use bevy_math::Vec2;
 use bevy_reflect::Reflect;
 use bevy_render::{
     prelude::Color,
@@ -18,7 +18,7 @@ use bevy_render::{
     Extract,
 };
 use bevy_sprite::{Anchor, ExtractedSprite, ExtractedSprites, TextureAtlas};
-use bevy_transform::prelude::{GlobalTransform, Transform};
+use bevy_transform::prelude::{GlobalTransform2d, Transform2d};
 use bevy_utils::HashSet;
 use bevy_window::{PrimaryWindow, Window, WindowScaleFactorChanged};
 
@@ -65,9 +65,9 @@ pub struct Text2dBundle {
     /// The maximum width and height of the text.
     pub text_2d_bounds: Text2dBounds,
     /// The transform of the text.
-    pub transform: Transform,
+    pub transform: Transform2d,
     /// The global transform of the text.
-    pub global_transform: GlobalTransform,
+    pub global_transform: GlobalTransform2d,
     /// The visibility properties of the text.
     pub visibility: Visibility,
     /// Algorithmically-computed indication of whether an entity is visible and should be extracted for rendering.
@@ -87,7 +87,7 @@ pub fn extract_text2d_sprite(
             &Text,
             &TextLayoutInfo,
             &Anchor,
-            &GlobalTransform,
+            &GlobalTransform2d,
         )>,
     >,
 ) {
@@ -96,7 +96,7 @@ pub fn extract_text2d_sprite(
         .get_single()
         .map(|window| window.resolution.scale_factor() as f32)
         .unwrap_or(1.0);
-    let scaling = GlobalTransform::from_scale(Vec3::splat(scale_factor.recip()));
+    let scaling = GlobalTransform2d::from_scale(Vec2::splat(scale_factor.recip()));
 
     for (entity, computed_visibility, text, text_layout_info, anchor, global_transform) in
         text2d_query.iter()
@@ -107,9 +107,7 @@ pub fn extract_text2d_sprite(
 
         let text_anchor = -(anchor.as_vec() + 0.5);
         let alignment_translation = text_layout_info.size * text_anchor;
-        let transform = *global_transform
-            * scaling
-            * GlobalTransform::from_translation(alignment_translation.extend(0.));
+        let transform = *global_transform * scaling;
         let mut color = Color::WHITE;
         let mut current_section = usize::MAX;
         for PositionedGlyph {
@@ -127,7 +125,8 @@ pub fn extract_text2d_sprite(
 
             extracted_sprites.sprites.push(ExtractedSprite {
                 entity,
-                transform: transform * GlobalTransform::from_translation(position.extend(0.)),
+                transform: transform
+                    * GlobalTransform2d::from_translation(*position + alignment_translation),
                 color,
                 rect: Some(atlas.textures[atlas_info.glyph_index]),
                 custom_size: None,
